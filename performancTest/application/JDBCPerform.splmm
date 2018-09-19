@@ -1,0 +1,230 @@
+/***************************************************************************
+* Copyright (C)2014, 2016 International Business Machines Corporation and
+* others. All Rights Reserved.
+****************************************************************************/
+
+<% # Switch to Perl scripting mode
+	use integer;
+	use strict;
+	use warnings;
+	my $cfg_filename = 'config.cfg';
+	my $cfg_value = "";
+	my $cfg_line ="";
+	my $parallelLoaders=2;
+	my $maxRows;
+	my $jdbcDriverLib="";
+	my $jdbcClassName="";
+	my $jdbcUrl="";
+	my $jdbcUser="";
+	my $jdbcPassword="";
+    # open config.cfg file and set the configuration parameters
+    open(CFGFILE,"<$cfg_filename") or die "Can't open configuration file $cfg_filename.";
+    my @cf=<CFGFILE>;
+	my @ln="";
+    foreach $cfg_line (@cf)
+	{
+		# Lines starting with a hash mark are comments
+		if (index($cfg_line,"#")==0) { next; } 
+		# Lines without a "=" 
+		if (index($cfg_line, "=") == -1) { next; } 
+
+		@ln=split("=",$cfg_line);
+		if ($ln[0] =~ /$cfg_value/i) 
+		{
+			chomp $ln[0];
+			chomp $ln[1];
+#			print "//$ln[0]=$ln[1]\n";
+			if (index($ln[0], "parallelLoaders") != -1) 
+			{ 
+				$parallelLoaders=$ln[1]; 
+				print "//parallelLoaders=$parallelLoaders\n";
+			} 
+			if (index($ln[0], "maxRows") != -1) 
+			{ 
+				$maxRows=$ln[1]; 
+				print "//maxRows=$maxRows\n";
+			} 
+			if (index($ln[0], "jdbcDriverLib") != -1) 
+			{ 
+				$jdbcDriverLib=$ln[1]; 
+				print "//jdbcDriverLib=$jdbcDriverLib\n";
+			} 
+			if (index($ln[0], "jdbcClassName") != -1) 
+			{ 
+				$jdbcClassName=$ln[1]; 
+				print "//jdbcClassName=$jdbcClassName\n";
+			} 
+			if (index($ln[0], "jdbcUrl") != -1) 
+			{ 
+				$jdbcUrl=$ln[1]; 
+				print "//jdbcUrl=$jdbcUrl\n";
+			} 
+			if (index($ln[0], "jdbcUser") != -1) 
+			{ 
+				$jdbcUser=$ln[1]; 
+				print "//jdbcUser=$jdbcUser\n";
+			} 
+			if (index($ln[0], "jdbcPassword") != -1) 
+			{ 
+				$jdbcPassword=$ln[1]; 
+				print "//jdbcPassword=$jdbcPassword\n";
+			} 
+		}
+	}
+	close CFGFILE;
+
+	# check the value of $parallelLoaders 
+	if ($parallelLoaders  eq  $parallelLoaders+0)  # is a number
+	{  
+		if ($parallelLoaders > 30)
+		{
+			$parallelLoaders = 30;
+		}
+		 
+		if ($parallelLoaders < 1)
+		{
+			$parallelLoaders = 1;
+		} 
+	}
+	else
+	{
+		$parallelLoaders = 2;
+	}
+%>
+namespace application;
+
+use com.ibm.streamsx.jdbc::* ;
+use com.ibm.streamsx.jdbc.types::* ;
+/*******************************************************************************
+ * JDBCRun demonstrates how to insert data into database.
+ *******************************************************************************/
+
+composite JDBCPerform {
+
+	param
+		expression<rstring> $jdbcDriverLib  : "<%=$jdbcDriverLib%>" ;
+		expression<rstring> $jdbcClassName  : "<%=$jdbcClassName%>" ;
+		expression<rstring> $jdbcUrl        : "<%=$jdbcUrl%>" ;
+		expression<rstring> $jdbcUser       : "<%=$jdbcUser%>" ;
+		expression<rstring> $jdbcPassword   : "<%=$jdbcPassword%>" ;
+
+	type
+		insertSchema = uint64 ID, rstring FNAME, rstring LNAME, int32 AGE,rstring GENDER,rstring ADDRESS, rstring CALLNUMBER,float32 SCORE, float64 TOTAL ;
+
+	graph
+
+	<% my $cnt=0;  for ($cnt=1; $cnt<=$parallelLoaders; $cnt++) {%>
+/**************************************  <%=$cnt%>  *****************************************/
+	stream <int32 id> startDrop<%=$cnt%> = Beacon()
+	{
+		param
+			iterations : 1;
+		config
+			placement : partitionColocation("partitionCol-<%=$cnt%>") ; 
+	}
+    
+	/*
+	 * drop tables in database via JDBCRun operator  
+	 */
+	stream<int32 id> dropTable<%=$cnt%> = JDBCRun(startDrop<%=$cnt%>)
+	{
+		param
+			jdbcDriverLib   : $jdbcDriverLib ;
+			jdbcClassName   : $jdbcClassName ;
+			jdbcUrl         : $jdbcUrl ;
+			jdbcUser        : $jdbcUser ;
+			jdbcPassword    : $jdbcPassword ;
+			statement       : "DROP TABLE JDBCRUN_PERSON<%=$cnt%>" ;
+		config
+			placement : partitionColocation("partitionCol-<%=$cnt%>") ; 
+	}
+
+	stream <int32 id> startCreate<%=$cnt%> = Beacon()
+	{
+		param
+			iterations      : 1;
+			initDelay       : 5.0;
+		config
+			placement : partitionColocation("partitionCol-<%=$cnt%>") ; 
+	}
+
+	/*
+	 * creates a table in database via JDBCRun operator  
+	 */
+	stream<int32 id> createTable<%=$cnt%> = JDBCRun(startCreate<%=$cnt%>)
+	{
+		param
+			jdbcDriverLib   : $jdbcDriverLib ;
+			jdbcClassName   : $jdbcClassName ;
+			jdbcUrl         : $jdbcUrl ;
+			jdbcUser        : $jdbcUser ;
+			jdbcPassword    : $jdbcPassword ;
+			statement       : "CREATE TABLE JDBCRUN_PERSON<%=$cnt%> (ID INTEGER NOT NULL, FNAME CHAR(20), LNAME CHAR(20), AGE INTEGER, GENDER CHAR(1), ADDRESS CHAR(30), CALLNUMBER CHAR(25), SCORE REAL, TOTAL DOUBLE)";
+		
+		config
+			placement : partitionColocation("partitionCol-<%=$cnt%>") ; 
+	}
+
+	/*
+	 * generate <%=$maxRows%> rows for database table  
+	 */
+	stream<insertSchema> dataGenerator<%=$cnt%> = Beacon()
+	{
+		param
+			iterations      : <%=$maxRows%>u ;
+			initDelay       : 20.0;
+			
+		output
+			dataGenerator<%=$cnt%> : 
+				ID          = IterationCount() , 
+				FNAME       = "Arzu-<%=$cnt%>-" + (rstring)IterationCount() , 
+				LNAME       = "Smith-<%=$cnt%>-" + (rstring)IterationCount()  , 
+				AGE         = 22 + (int32)IterationCount(),
+				GENDER      = "F",
+				ADDRESS     = "Berliner Street <%=$cnt%>" + (rstring)IterationCount() , 
+				CALLNUMBER  = "+49 30 912345678<%=$cnt%>" + (rstring)IterationCount() , 
+				SCORE       = (float32) <%=$cnt%>*3.3w + 1.1w, 
+				TOTAL       = (float64) <%=$cnt%>*9.3l + 2.2l;
+		
+		config
+			placement : partitionColocation("partitionCol-<%=$cnt%>") ; 
+	}
+	           
+	 /* only for test
+		() as printdataGenerator<%=$cnt%> = FileSink(dataGenerator<%=$cnt%>)
+		{
+			logic
+			onTuple dataGenerator<%=$cnt%> : printStringLn(
+				"ID : " +(rstring) ID +
+				", FNAME: " + FNAME +
+				", LNAME: " + LNAME +
+				", GENDER: " + GENDER +
+				", SCORE: " + (rstring)SCORE + 
+				", TOTAL: " + (rstring)TOTAL);
+			param
+			 file : "output.dat"	;
+		}
+	
+	
+	/*
+	 * inserts rows into database table via JDBCRun operator  
+	 */
+	stream<insertSchema> insert<%=$cnt%> = JDBCRun(dataGenerator<%=$cnt%>)
+	{
+		param
+			jdbcDriverLib  : $jdbcDriverLib ;
+			jdbcClassName  : $jdbcClassName ;
+			jdbcUrl        : $jdbcUrl ;
+			jdbcUser       : $jdbcUser ;
+			jdbcPassword   : $jdbcPassword;
+//			batchSize      : <%=$maxRows%> / 10 ; 
+			transactionSize: 100;
+			statement      : "INSERT INTO JDBCRUN_PERSON<%=$cnt%> (ID, FNAME, LNAME, AGE, GENDER, ADDRESS, CALLNUMBER, SCORE, TOTAL)
+							  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)" ;
+			statementParamAttrs : "ID, FNAME, LNAME, AGE, GENDER, ADDRESS, CALLNUMBER, SCORE, TOTAL" ;
+
+		config
+			placement : partitionColocation("partitionCol-<%=$cnt%>") ; 
+	}
+	<%}%>
+}
