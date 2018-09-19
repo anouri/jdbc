@@ -118,7 +118,7 @@ composite JDBCSSl
   param
     expression<rstring> $jdbcDriverLib : getSubmissionTimeValue("jdbcDriverLib", "opt/db2jcc4.jar") ;
     expression<rstring> $jdbcClassName : getSubmissionTimeValue("jdbcClassName", "com.ibm.db2.jcc.DB2Driver") ;
-    expression<rstring> $jdbcUrl : getSubmissionTimeValue("jdbcUrl", "jdbc:db2://<your-db2-server>:50005") ;
+    expression<rstring> $jdbcUrl : getSubmissionTimeValue("jdbcUrl", "jdbc:db2://<your-db2-server>:50005/YOURDDB") ;
     expression<rstring> $jdbcUser: getSubmissionTimeValue("jdbcUser", "db2inst1" );
     expression<rstring> $jdbcPassword: getSubmissionTimeValue("jdbcPassword", "db2Passw=rd" );
     expression<rstring> $trustStore : getSubmissionTimeValue("trustStore", "opt/keystore.jks") ;
