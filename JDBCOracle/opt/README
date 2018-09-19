@@ -1,14 +1,7 @@
-Download the following phoenix jdbc drivers :
 
-phoenix-4.9.0-HBase-1.1-client.jar       
-phoenix-queryserver-4.9.0-HBase-1.1.jar         
-phoenix-tracing-webapp-4.9.0-HBase-1.1.jar
-phoenix-4.9.0-HBase-1.1-queryserver.jar  
-phoenix-queryserver-client-4.9.0-HBase-1.1.jar
+Download the ORACLE jdbc driver (ojdbc7.jar) from:
 
-from
+http://www.oracle.com/technetwork/database/features/jdbc/jdbc-drivers-12c-download-1958347.html
 
-https://github.com/IBM-Cloud/IBM-Analytics-Engine/tree/master/jdbcsamples/TestPhoenix/lib
-
-and copy them in this opt directory.
+and copy it in this opt directory.
  
