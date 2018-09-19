@@ -1,0 +1,204 @@
+
+// *******************************************************************************
+// * Copyright (C) 2015-2018 International Business Machines Corporation
+// * All Rights Reserved
+// *******************************************************************************
+namespace application;
+use com.ibm.streamsx.jdbc::*;
+use com.ibm.streamsx.jdbc.types::* ;
+/*******************************************************************************
+ * JDBCGetSQLError demonstrates how to use the Error Port with JDBCRun operator.
+ * and how to check the SQL code to abort the PE.
+ *
+ * Befor you begin create a test table on your DB2 database 
+ * db2 "CREATE TABLE JDBCRUN_INSERT (ID INTEGER NOT NULL, FNAME CHAR(10), LNAME CHAR(10))"
+ * 
+ * Replace the value of jdbcUrl, jdbcUser and jdbcPassword with your DB2
+ * database credentials 
+ *
+ * To get full message text from an SQLException.getMessage set the retrieveMessagesFromServerOnGetMessage 
+ * property to true in jdbcUrl.
+ *
+ * Copy the DB2 jdbc driver library db2jcc4.jar in opt directory
+ * Make and start the application.
+ * $> make
+ * $> streamtool submitjob output/com.ibm.streamsx.jdbc.sample.jdbcrun.JDBCGetSQLError.sab
+ * 
+ * During the test check the DB2 table
+ * * login in db2 server and run this commmand
+ * $> db2 connect to <your-db-name> user <your-db-user> using <your-db-password>
+ * $> db2 "select * from JDBCRUN_INSERT"
+ * ID          FNAME      LNAME
+ * ----------- ---------- ----------
+ *         1 Fname_2    Lname_2
+ *         2 Fname_3    Lname_3
+ *         .....
+ *         .......
+ *
+ * Now disconnect the database
+ * for example unplug the Ethernet cable 
+ * or stop your DB2 database (db2stop force)
+ * And check the console output
+ * sqlCode: -4499 sqlState: 08001 sqlMessage: Error for batch element #1: [jcc][t4][2030][11211][4.16.53] 
+ * A communication error occurred during operations on the connection's underlying socket, socket input stream, 
+ * Now plug the Ethernet cable again
+ * Or restart your DB2 Database (db2start)
+ * You can see the PEs are unhealty and teh job is terminate.
+ *
+ *******************************************************************************/
+
+composite JDBCConnection {
+
+  param
+
+	expression<rstring> $jdbcDriverLib : getSubmissionTimeValue("jdbcDriverLib", "opt/postgresql-42.1.3.jar");
+	expression<rstring> $jdbcClassName : getSubmissionTimeValue("jdbcClassName", "org.postgresql.Driver");
+	expression<rstring> $jdbcUrl : getSubmissionTimeValue("jdbcUrl", "jdbc:postgresql://9.30.101.203/streams");
+	expression<rstring> $jdbcUser : getSubmissionTimeValue("jdbcUser", "postgres");
+	expression<rstring> $jdbcPassword : getSubmissionTimeValue("jdbcPassword", "postpass");
+	expression<rstring> $statement : getSubmissionTimeValue("statement", "SELECT * from streamsTable");
+
+type
+            // the postgres database deliver the select results with small capital letters
+            // lastname is correct and not LastName 
+	resultSchema = 	int32 		personid, 
+			rstring 	lastname,
+			rstring 	firstname,
+			rstring	 	address,
+			rstring 	city;
+
+		rsSchema      = int32 ID, rstring 	NAME;
+		selectSchema  = rstring	sql; 
+		insertSchema = 	int32 		ID, 
+				rstring 	FNAME,
+				rstring 	LNAME;
+
+
+ 	graph
+		stream<int32 counter> pulse = Beacon() {
+	        logic
+	        	state: mutable int32 i = 1;        
+			param
+				initDelay   : 2.0;
+				iterations  : 10u ;
+				period		: 1.0;
+			output
+				pulse : counter 	= i++;
+	
+		}
+ 
+
+
+		/*
+		 * Data Generator
+		 */
+		
+		 stream<int32 counter>  DataGen = Custom() {
+			logic
+			state: {		
+				mutable int32 i1 = 0;
+				mutable boolean firstTuple = true;
+//				mutable Range range5 = new Range(5);
+			}
+//			onTuple pulse: 
+//			    printStringLn((rstring) counter) ;
+//				submit({ counter= counter}, DataGen);
+				// prevent that final punct is sent
+						
+//				while (true) {
+//					block(1.0);
+//			}	
+ 			onProcess: {
+				for (int32 filenum in range(5)) {
+					submit({ counter= filenum}, DataGen) ;
+				}
+				// prevent that final punct is sent
+				while (true) {
+					block(1.0);
+				}
+			}
+			config placement: partitionColocation("jdbcrun");
+		} 
+
+
+
+
+		/** The genInsert is a Functor operator 
+		*   and generates tuples for JDBCRun insert .
+		*/
+		stream<insertSchema> genInsert = Functor(DataGen){
+			output
+				genInsert: ID 	= counter,
+					FNAME	= "Fname_" + (rstring) counter,
+					LNAME	= "Lname_" + (rstring) counter;
+		}
+
+		/** The runSql is a JDBCRun operator 
+		*   It insert tuples into a table in database
+		*/
+ 		(stream<rsSchema> runSql ; stream<tuple<insertSchema> inTuple, JdbcSqlStatus_T error> errors) =
+ 			JDBCRun(genInsert)
+ 		{
+ 			logic
+ 				onTuple genInsert : printStringLn((rstring) ID) ;
+ 
+ 			param
+ 				jdbcDriverLib         : $jdbcDriverLib ;
+ 				jdbcClassName         : $jdbcClassName ;
+ 				jdbcUrl               : $jdbcUrl ;
+ 				jdbcUser              : $jdbcUser ;
+ 				jdbcPassword          : $jdbcPassword ;
+ 				sqlStatusAttr         : "error" ;
+				statement             : "INSERT INTO JDBCRUN_INSERT (ID, FNAME, LNAME) VALUES (?, ?, ?)";
+				statementParamAttrs   : "ID, FNAME, LNAME";
+                                batchSize             : 5;
+				sqlFailureAction      : "terminate";
+				reconnectionPolicy    : "BoundedRetry";
+				reconnectionBound     : 3;
+				reconnectionInterval  : 1.0;
+//				isolationLevel 	      : "READ_COMMITTED" ;
+ 				
+			config
+				placement : partitionColocation("jdbcrun") ;
+				restartable : false; 
+ 		}
+  
+		/** The printError is a Custom operator 
+		*   In case of any SQL error it prints the SQL Code and SQL message
+		*/
+ 		() as printError = Custom(errors)
+ 		{
+ 			logic
+			onTuple errors : {
+					printStringLn("AAAAAAAAAAAAAAAAAAAA  printError sqlCode: " +(rstring) error.sqlCode + ", sqlState: " +
+					error.sqlState + ", sqlMessage: " + error.sqlMessage) ;
+//					if (( error.sqlCode == -4499 ) || (error.sqlCode == -4229 ) )
+					if (( error.sqlCode == -1 ))
+					{
+						printStringLn("BBBBBBBBBBBBBBBBBB communication error occurred."); 
+						// abort() terminates the PE 
+						abort(); 								
+					}
+				}
+				
+			config
+				placement : partitionColocation("jdbcrun") ;
+				restartable : false; 
+ 		}
+ 
+		/** The printSqlResults is a Custom operator 
+		*   It prints the SQL results in case of SELECT SQL statement
+		*/
+  		() as printSqlResults = FileSink(runSql)
+ 		{
+ 			logic
+ 				onTuple runSql : printStringLn((rstring) ID + "," + NAME) ;
+ 			param
+ 				file : "output.csv" ;
+ 				
+ 		}
+ 
+ }
+
+
+	

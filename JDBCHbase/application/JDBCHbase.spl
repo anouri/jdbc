@@ -1,0 +1,149 @@
+// *******************************************************************************
+// * Copyright (C) 2018 International Business Machines Corporation
+// * All Rights Reserved
+// *******************************************************************************
+// JDBCRUN_HBASE.spl demonstrates how to connect to a HBASe database 
+// on IBM Analytics Engine via streams toolkit com.ibm.streamsx.jdbc 
+// and Apache Phoenix JDBC
+// It demonstrates also how to:    
+// create a table 
+// insert data into table
+// select data from table 
+// and drop a table
+// via JDBCRun operator.
+// 
+// To connect to database, the following parameters need to be specified:
+// jdbcDriverLib : the jdbc driver library (download the jdbc driver and store it in opt folder, 
+// e.g.   opt/db2jcc4.jar)
+// jdbcClassName : the class name for jdbc driver (e.g. com.ibm.db2.jcc.DB2Driver)
+// jdbcUrl       : This parameter specifies the database url that JDBC driver uses 
+// to connect to a database and it must have exactly one value of type rstring. 
+// The syntax of jdbc url is specified by database vendors. 
+// For example, jdbc:db2://<server>:<port>/<database>the database URL. 
+// and For Phoenix JDBC "jdbc:phoenix:thin:url=https://<database-host-nama>:<server:port>/<database>)
+// jdbcUser      : the database user on whose behalf the connection is being made.
+// jdbcPassword  : the database user’s password.
+// 
+// This sample runs with streams JDBC toolkit version 1.3 or higher
+// https://github.com/IBMStreams/streamsx.jdbc
+// and with phoenix jdbc driver.
+// https://github.com/IBM-Cloud/IBM-Analytics-Engine/tree/master/jdbcsamples/TestPhoenix/lib
+// or direct from https://phoenix.apache.org/index.html
+// Download and copy the following jar libraries and copy them in opt directory
+// phoenix-4.9.0-HBase-1.1-client.jar       
+// phoenix-queryserver-4.9.0-HBase-1.1.jar         
+// phoenix-tracing-webapp-4.9.0-HBase-1.1.jar
+// phoenix-4.9.0-HBase-1.1-queryserver.jar  
+// phoenix-queryserver-client-4.9.0-HBase-1.1.jar
+// 
+// ******************************************************************************
+
+namespace application; 
+use com.ibm.streamsx.jdbc::* ;
+use com.ibm.streamsx.jdbc.types::* ;
+
+composite JDBCHbase
+{
+	param
+		expression<rstring> $jdbcDriverLib	: getSubmissionTimeValue("jdbcDriverLib", "opt/phoenix-4.9.0-HBase-1.1-client.jar");
+		expression<rstring> $jdbcClassName	: getSubmissionTimeValue("jdbcClassName", "org.apache.phoenix.jdbc.PhoenixDriver");
+		expression<rstring> $jdbcUrl 		: getSubmissionTimeValue("jdbcUrl", "jdbc:phoenix:thin:url=https://159.122.220.211:8443/gateway/default/avatica;authentication=BASIC;serialization=PROTOBUF");
+		expression<rstring> $jdbcUser 		: getSubmissionTimeValue("jdbcUser", "clsadmin");
+		expression<rstring> $jdbcPassword 	: getSubmissionTimeValue("jdbcPassword", "l35MxbV2xc8b");
+
+
+	 	expression<rstring> $createSql 		: "CREATE TABLE IF NOT EXISTS JDBCRUN_HBASE (id bigint ,m.fname varchar(50),m.lname varchar(50) CONSTRAINT pk PRIMARY KEY (id))";
+	 	expression<rstring> $selectSql 		: "SELECT * FROM JDBCRUN_HBASE";
+		expression<rstring> $dropSql 		: "DROP TABLE IF EXISTS JDBCRUN_HBASE";
+		expression<rstring> $insertSql 		: "UPSERT INTO JDBCRUN_HBASE VALUES( ";
+
+
+   type
+		insertSchema  = int32 ID, rstring FNAME, rstring LNAME;
+		resultsSchema = int32 ID, rstring FNAME, rstring LNAME;
+
+	graph
+
+
+	   /**
+	   * The pulse is a Beacon operator that generates counter.
+	   */
+		stream<int32 counter> pulse = Beacon() {
+	        logic
+	        	state: mutable int32 i = 0;        
+			param
+				initDelay   : 2.0;
+				iterations  : 11u ;
+				period		: 3.0;
+			output
+				pulse : counter = i++;
+		}
+
+	   /**
+	   * genStatement is Custom operator that generates sql statements.
+	   */
+		stream<rstring statement>  genStatement = Custom(pulse)
+	   	{
+	        logic
+
+			state: mutable rstring 	stmt = "UPSERT INTO JDBCRUN_HBASE values( 0, 'FNAME0', 'LNAME0')";				
+
+			onTuple pulse :
+			{
+				if ( counter == 0)
+				{
+					stmt = $dropSql;					
+				}
+				else if ( counter == 1)
+				{
+					stmt = $createSql;
+				}
+				else if ( counter == 10)
+				{
+					stmt = $selectSql;								
+				}
+				else
+				{
+					stmt = $insertSql + (rstring)counter + ", 'FNAME" + (rstring)counter + "' , 'LNAME"  + (rstring)counter +"')";
+				}
+				
+				printStringLn( (rstring)counter + "  SQL Statement = " + stmt ) ;
+				submit({ statement = stmt }, genStatement) ;
+			}
+		}
+
+
+	   /**
+	   * runSql is a JDBCRun operator.
+	   * It runs a user-defined SQL statement that is based on an input tuple.
+	   */
+		stream<insertSchema> runSql = JDBCRun(genStatement)
+		{
+			param
+				jdbcDriverLib	: $jdbcDriverLib ;
+				jdbcClassName	: $jdbcClassName ;
+				jdbcUrl			: $jdbcUrl ;
+				jdbcUser		: $jdbcUser ;
+				jdbcPassword	: $jdbcPassword;
+				statementAttr	: statement ;
+				sqlFailureAction : "log";
+		}
+
+	   /**
+	   * printResults is a Custom operator that prints the sql results.
+	   */
+		() as printResults = Custom(runSql)
+		{
+			    logic
+			     onTuple runSql :
+			    {
+						if (ID > 0)
+						{
+							printStringLn((rstring) ID + "," + FNAME + "," + LNAME);
+						}		
+				}
+		}
+	
+
+}
+	

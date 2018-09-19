@@ -1,0 +1,25 @@
+#####################################################################
+# Copyright (C)2014, 2016 International Business Machines Corporation and
+# others. All Rights Reserved.
+#####################################################################
+
+.PHONY: all clean
+
+SPLC_FLAGS = -t $(STREAMS_INSTALL)/toolkits/com.ibm.streamsx.jdbc  --data-directory data
+#SPLC_FLAGS = -t ../streamsx.jdbc/com.ibm.streamsx.jdbc  --data-directory data
+
+SPLC = $(STREAMS_INSTALL)/bin/sc
+
+SPL_CMD_ARGS ?=
+SPL_COMP1NAME=JDBCDb2Cloud 
+SPL_MAIN_COMPOSITE1 = application::$(SPL_COMP1NAME)
+BUILD_OUTPUT_DIR = output
+
+all: clean
+	$(SPLC) $(SPLC_FLAGS) -M  $(SPL_MAIN_COMPOSITE1) --output-dir ./$(BUILD_OUTPUT_DIR)  $(SPL_CMD_ARGS)
+
+clean:
+	$(SPLC) $(SPLC_FLAGS) -C -M $(SPL_MAIN_COMPOSITE1) --output-dir output
+	-rm -rf toolkit.xml
+
+
